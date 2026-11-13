@@ -4,6 +4,10 @@ The regression baseline for the pair produced by `make_fixtures.py`. Rev 2
 carries one deliberate defect per check. A correct review finds all of them and
 invents nothing beyond them.
 
+**To check all of this automatically, run `python3 examples/selftest.py`** — it
+asserts everything on this page and exits non-zero on any failure. The commands
+below are for looking at the intermediate files by hand.
+
 Regenerate and re-run the pipeline:
 
 ```bash

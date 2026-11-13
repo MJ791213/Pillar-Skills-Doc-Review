@@ -98,13 +98,30 @@ Validate the manifests:
 claude plugin validate .
 ```
 
-Run the pipeline end to end on the fixtures:
+Run the self-test. It builds the fixture pair, runs the whole pipeline and
+asserts the baseline in `examples/expected-findings.md`. Run it after changing
+any script:
 
 ```bash
-cd skills/doc-revision-review && python3 examples/make_fixtures.py --out /tmp/fx && python3 scripts/extract_doc.py /tmp/fx/DES-9999_Rev2.docx --out /tmp/rev2 && python3 scripts/diff_revisions.py /tmp/fx/DES-9999_Rev1.docx /tmp/fx/DES-9999_Rev2.docx --out /tmp/diff && python3 scripts/annotate_docx.py /tmp/fx/DES-9999_Rev2.docx --findings assets/findings-template.json --out /tmp/out/full.docx && python3 examples/verify_annotation.py /tmp/out/full.docx --source /tmp/fx/DES-9999_Rev2.docx
+cd skills/doc-revision-review && python3 examples/selftest.py
 ```
 
-`examples/expected-findings.md` records what that run should produce.
+It makes 51 assertions and exits non-zero if any fails. It covers: a clean Rev 1
+raising no findings, each planted defect in Rev 2 being found, the newer
+revision being identified from the header rather than the argument order, the
+numeric-delta mask rejecting document IDs and cross-references, red notes
+inheriting the table font, stripping restoring the original content exactly,
+the source file never being modified, and the scripts refusing rather than
+guessing on bad input.
+
+To keep the generated files and look at them:
+
+```bash
+cd skills/doc-revision-review && python3 examples/selftest.py --keep
+```
+
+The self-test checks the scripts, not Claude's judgement. It cannot tell you
+whether a review reads well — only whether the mechanics still work.
 
 Requires `python-docx`; PDF input also needs `pdfplumber`.
 

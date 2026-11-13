@@ -178,5 +178,5 @@ Read all three for every review:
 
 - This skill is the document-side counterpart to **`dcr-change-order-reviewer`**: that one fills in the Change Order, this one verifies the documents the Change Order covers. The findings are written to drop into the eQMS **QA REVIEW** fields — tag each recommendation with the QA-Q it answers (QA-Q6 defects and evidence, QA-Q7 revision history, QA-Q8 header, QA-Q9 footer, QA-Q10 template). When the user is preparing a change order, offer to hand the findings over.
 - QA-Q10 can only be answered in part: you can flag a missing or mismatched template ID, but you cannot know the current controlled template revision. Say so rather than implying the template was verified.
-- `examples/make_fixtures.py` generates a Rev 1 / Rev 2 pair with one planted defect per check, and `examples/expected-findings.md` records what a correct review reports for it. Use them to check the scripts still work after a change.
+- `examples/selftest.py` builds a Rev 1 / Rev 2 fixture pair with one planted defect per check and asserts that the scripts still find all of them. Run it after changing any script. `examples/expected-findings.md` records the baseline it enforces.
 - The skill assists the reviewer. It does not replace the approval signature, and it does not perform the regulatory assessment of which requirements apply to the product.
