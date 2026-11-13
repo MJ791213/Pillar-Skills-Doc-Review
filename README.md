@@ -1,0 +1,129 @@
+# Pillar Skills — Document Review
+
+A Claude Code plugin for reviewing controlled medical device / IVD documents
+before approval.
+
+## What it does
+
+`doc-revision-review` acts as a QA Document Specialist and reviews a controlled
+document (specification, SOP, work instruction, user manual, protocol) against
+seven checks:
+
+| # | Check |
+|---|---|
+| 1 | The document title and the page header are aligned |
+| 2 | The revision number in the header matches the revision history table |
+| 3 | Every change listed in the revision history is actually present in the body |
+| 4 | When the previous revision is provided, the revision history is a complete and accurate account of the differences between the two |
+| 5 | No conflicts between sections of the same document |
+| 6 | No superseded standards or regulations cited |
+| 7 | Document hygiene — footer, page numbering, heading continuity, cross-references, placeholders, acronyms |
+
+It returns **the document annotated in Word**:
+
+- **red** notes written into the revision history table, next to the entry they
+  concern, in the font already used in that cell — missing entries, claims that
+  were not carried out, and entries that describe a change incorrectly;
+- an **orange** "Claude Recommendations" block appended at the end, with the
+  review summary and the recommended updates, labelled as a Claude
+  recommendation and not as approved content.
+
+The source file is never modified; a new `_CLAUDE-REVIEW.docx` is written.
+
+Which file is the newer revision is decided from the revision in the page
+header, not from the file name or the upload order.
+
+## Install
+
+```bash
+/plugin marketplace add MJ791213/Pillar-Skills-Doc-Review
+```
+
+```bash
+/plugin install pillar-doc-review@pillar-skills
+```
+
+Then upload one or two revisions of a document and ask for a review, or invoke
+it directly:
+
+```
+/pillar-doc-review:doc-revision-review
+```
+
+## Use
+
+Upload the new revision, and the previous revision if there is one. Check 4 —
+the comparison against the previous revision — is the most valuable part of the
+review and only runs when the old revision is supplied.
+
+A `.pdf` is reviewed the same way but cannot be annotated in place; the findings
+come back as a separate `.docx` review record.
+
+## Layout
+
+```
+.claude-plugin/
+  plugin.json                      plugin manifest
+  marketplace.json                 marketplace manifest
+skills/doc-revision-review/
+  SKILL.md                         the review workflow
+  scripts/
+    docx_common.py                 shared .docx traversal (headers, tables, headings)
+    extract_doc.py                 header/footer/title/revision history/sections/citations
+    diff_revisions.py              section-aware old-vs-new comparison
+    annotate_docx.py               writes the red and orange annotations; --strip-annotations
+  references/
+    review-checklist.md            the seven checks, line by line
+    regulatory-currency.md         current standard editions, with per-row provenance
+    annotation-format.md           wording templates and the findings.json shape
+  assets/
+    findings-template.json         worked findings file for the fixture pair
+  examples/
+    make_fixtures.py               generates a Rev 1 / Rev 2 pair with planted defects
+    expected-findings.md           the regression baseline
+    verify_annotation.py           asserts the annotations are really in the output
+```
+
+## Develop
+
+Load the plugin without installing it:
+
+```bash
+claude --plugin-dir ./
+```
+
+Validate the manifests:
+
+```bash
+claude plugin validate .
+```
+
+Run the pipeline end to end on the fixtures:
+
+```bash
+cd skills/doc-revision-review && python3 examples/make_fixtures.py --out /tmp/fx && python3 scripts/extract_doc.py /tmp/fx/DES-9999_Rev2.docx --out /tmp/rev2 && python3 scripts/diff_revisions.py /tmp/fx/DES-9999_Rev1.docx /tmp/fx/DES-9999_Rev2.docx --out /tmp/diff && python3 scripts/annotate_docx.py /tmp/fx/DES-9999_Rev2.docx --findings assets/findings-template.json --out /tmp/out/full.docx && python3 examples/verify_annotation.py /tmp/out/full.docx --source /tmp/fx/DES-9999_Rev2.docx
+```
+
+`examples/expected-findings.md` records what that run should produce.
+
+Requires `python-docx`; PDF input also needs `pdfplumber`.
+
+## Caveats
+
+- `references/regulatory-currency.md` is a convenience aid, not a controlled
+  standards register. Every row carries a confidence mark and a verification
+  date, the skill confirms a citation by web search before reporting it as
+  outdated, and every regulatory finding is marked as needing confirmation
+  against the company's controlled standards list.
+- Revision history table layouts vary by template. Detection is heuristic; if no
+  revision history table is found the skill reports that and annotates nothing
+  rather than marking up the wrong table.
+- The skill assists the reviewer. It does not replace the approval signature.
+
+## Related
+
+`doc-revision-review` is the document-side counterpart to the
+`dcr-change-order-reviewer` skill: that one fills in the Change Order, this one
+verifies the documents the Change Order covers. Findings are tagged with the
+QA REVIEW question they answer (QA-Q6 to QA-Q10) so they can be pasted into the
+eQMS.

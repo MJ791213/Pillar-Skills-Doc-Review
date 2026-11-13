@@ -1,0 +1,16 @@
+{
+  "name": "pillar-skills",
+  "owner": {
+    "name": "MJ791213"
+  },
+  "description": "Pillar Biosciences QA document review skills.",
+  "plugins": [
+    {
+      "name": "pillar-doc-review",
+      "source": "./",
+      "description": "Review a controlled medical device / IVD document before approval: title vs header, revision number vs revision history, revision history vs document body, old vs new revision comparison, cross-section conflicts and outdated regulatory citations. Returns the document annotated in Word.",
+      "category": "documentation",
+      "strict": true
+    }
+  ]
+}

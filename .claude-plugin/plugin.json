@@ -1,0 +1,19 @@
+{
+  "name": "pillar-doc-review",
+  "description": "QA document review skills for medical device / IVD controlled documents.",
+  "version": "0.1.0",
+  "author": {
+    "name": "MJ791213"
+  },
+  "homepage": "https://github.com/MJ791213/Pillar-Skills-Doc-Review",
+  "repository": "https://github.com/MJ791213/Pillar-Skills-Doc-Review",
+  "license": "MIT",
+  "keywords": [
+    "medical-device",
+    "ivd",
+    "quality-assurance",
+    "document-control",
+    "revision-history",
+    "document-review"
+  ]
+}
