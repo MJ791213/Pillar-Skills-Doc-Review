@@ -79,7 +79,8 @@ skills/doc-revision-review/
   assets/
     findings-template.json         worked findings file for the fixture pair
   examples/
-    make_fixtures.py               generates a Rev 1 / Rev 2 pair with planted defects
+    make_fixtures.py               generates two fixture pairs with planted defects
+    selftest.py                    asserts the whole pipeline (77 assertions)
     expected-findings.md           the regression baseline
     verify_annotation.py           asserts the annotations are really in the output
 ```
@@ -106,7 +107,7 @@ any script:
 cd skills/doc-revision-review && python3 examples/selftest.py
 ```
 
-It makes 51 assertions and exits non-zero if any fails. It covers: a clean Rev 1
+It makes 77 assertions across two fixture pairs and exits non-zero if any fails. It covers: a clean Rev 1
 raising no findings, each planted defect in Rev 2 being found, the newer
 revision being identified from the header rather than the argument order, the
 numeric-delta mask rejecting document IDs and cross-references, red notes

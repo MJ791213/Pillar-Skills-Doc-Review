@@ -100,13 +100,49 @@ def main():
         unmarked = [r for r in red if not run_text(r).strip().startswith(MARKER)]
         if unmarked:
             failures.append(f"{len(unmarked)} red run(s) are missing the {MARKER} marker")
+
+        # Whether a run *should* carry an explicit font depends on the document.
+        # Many templates set the font on the paragraph style and leave the runs
+        # bare, so an absent w:rFonts is correct there and demanding one would
+        # fail a correctly annotated file. What matters is that the red run
+        # matches its surroundings - checked against --source below, and via
+        # the paragraph style here.
         for r in red:
             family, pts = run_font(r)
-            if family is None or pts is None:
-                failures.append(
-                    f"red run did not inherit a font (family={family}, size={pts}): "
-                    f"{run_text(r)[:60]!r} - Word will fall back to the default font"
+            if (family is None or pts is None) and not a.source:
+                notes.append(
+                    f"red run has no explicit font (family={family}, size={pts}); it will "
+                    "inherit from the paragraph style. Pass --source to confirm that "
+                    "matches the source table."
                 )
+                break
+
+        styleless = []
+        for r in red:
+            p = r.getparent()
+            if p is None or p.tag != qn("w:p"):
+                continue
+            ppr = p.find(qn("w:pPr"))
+            style = ppr.find(qn("w:pStyle")) if ppr is not None else None
+            siblings = [
+                s for s in (p.getparent().findall(qn("w:p")) if p.getparent() is not None else [])
+                if s is not p
+            ]
+            sibling_styles = set()
+            for s in siblings:
+                sppr = s.find(qn("w:pPr"))
+                sstyle = sppr.find(qn("w:pStyle")) if sppr is not None else None
+                sibling_styles.add(sstyle.get(qn("w:val")) if sstyle is not None else None)
+            mine = style.get(qn("w:val")) if style is not None else None
+            if sibling_styles and mine not in sibling_styles:
+                styleless.append((mine, sorted(map(str, sibling_styles))))
+        if styleless:
+            failures.append(
+                "red note paragraph(s) do not share the paragraph style of the cell's "
+                f"existing text, so they will render differently: {styleless[:3]}"
+            )
+        else:
+            notes.append("red notes share the paragraph style of the cell's existing text")
 
     if a.source:
         src = docx.Document(a.source)

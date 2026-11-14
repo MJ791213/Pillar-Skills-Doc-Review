@@ -68,6 +68,13 @@ mechanical `auto_checks`. Read it before anything else.
 Honour its `warnings`. **If no revision history table was found, stop**: report
 that, annotate nothing, and do not guess at another table.
 
+Two things the extractor has to work out rather than read, and both report how
+confident they are. Respect that confidence instead of presenting an inference
+as a fact:
+
+- **The header revision.** Many templates hold it in a header table cell as a bare number with no `Rev.` label. `header_info.revision_confidence` is `labelled`, `inferred-corroborated`, `uncorroborated` or `not found`; on `uncorroborated` report check 2 as REVIEW, never PASS or FAIL.
+- **Section numbers.** Most controlled templates number headings through the Heading styles, so the number Word shows is in neither the text nor the paragraph — it is rebuilt from `numbering.xml`. `numbering_validation` says whether the document's own revision history corroborates the result. **If `reliable` is false, do not quote section numbers in findings** — refer to sections by heading title. `stale_citations` there lists historical entries citing numbers that have since moved; those are check 3 findings, not numbering errors.
+
 `.docx` gets the full path. A `.pdf` is read with `pdfplumber` and reviewed the
 same way, but it **cannot be annotated** — see Step 4. A PDF with no text layer
 is a scan: say you could not read it rather than reporting passes.
@@ -83,10 +90,16 @@ which it chose. Add `--force-order` only when the headers cannot be trusted and
 the user has told you which is which.
 
 `diff.json` gives section-level changes, the changed sentences inside each
-modified section, `all_numeric_deltas` (changed values pulled out of prose so a
-moved acceptance criterion cannot hide in it), table changes, and
-`change_statements` — one short line per real difference, which is what you
-match against the revision history.
+modified section, `all_numeric_deltas` (values that changed on **both** sides,
+pulled out of prose so a moved acceptance criterion cannot hide in it), table
+changes, and `change_statements` — one short line per real difference, which is
+what you match against the revision history.
+`all_one_sided_values` holds numbers that appear only in added or removed text;
+they are part of that text, not changed values, so weigh them accordingly.
+
+When the header revision cannot be read, the script falls back to the revision
+history to decide which file is newer and says so in `ordering_reason`. Repeat
+that reasoning to the user — the ordering is the foundation of check 4.
 
 ### Step 3 – Run the seven checks
 

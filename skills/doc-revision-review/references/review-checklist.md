@@ -63,6 +63,23 @@ pass a title that a reviewer would reject. Read the two strings yourself.
 
 ## Check 2 — Header revision matches the revision history  *(requirement 3, QA-Q7/Q8)*
 
+**Pillar convention: the page header carries the major revision only.** A minor uprev
+(8.01, 8.02 … typo corrections, part-number additions) deliberately leaves the header at
+`8`. So a header reading `8` against a latest entry of `8.04` is **correct** — the script
+reports PASS with `exact_match: false`, and it is **not a finding**. Only a disagreement
+in the major component is a defect (header `7` against a latest entry of `8.04`).
+
+**Where the revision comes from matters.** Many templates put the revision in a header
+table cell as a bare number with no `Rev.` label. `extract.json` reports
+`header_info.revision_confidence`:
+
+| Confidence | Meaning | What to report |
+|---|---|---|
+| `labelled` | Read from an explicit `Rev. N` | Normal PASS / FAIL. |
+| `inferred-corroborated` | A bare header cell, confirmed against the revision history | Normal PASS / FAIL, but say in the finding that the header carries no label. Worth an Observation suggesting the template label it. |
+| `uncorroborated` | A bare value that the revision history does not confirm | **REVIEW only.** Never PASS or FAIL. Confirm the revision by eye. |
+| `not found` | No revision in the header at all | **REVIEW**, and say so plainly. |
+
 - The revision in the page header must equal the revision of the **latest** entry in the revision history table. "Latest" means highest revision, not last row — some templates list newest first.
 - The revision must be the same in every header part and on every page.
 - The date on the latest entry must not be in the future, and must not predate the entry above it.
@@ -92,6 +109,25 @@ the document was readable.
 Entries for revisions **before** the current one describe changes already
 incorporated; verify them against the body as it now stands, and treat an entry
 whose change has since been reverted as a finding worth an Observation.
+
+### Stale section references in historical entries
+
+`extract.json` → `numbering_validation.stale_citations` lists entries that cite a section
+by a number the section no longer carries — usually because a later revision renumbered or
+reworked that part of the document. Each one gives the revision that wrote it, the number
+it cited, and where that section lives now.
+
+Report these as **Minor** findings under check 3, and describe them accurately: a
+historical entry is a record of what was done at the time, so the entry is not *wrong*
+so much as no longer navigable. Say which section the reader should look at instead. Do
+not recommend rewriting approved history unless the user's procedure allows it; the useful
+recommendation is usually to avoid bare section numbers in future entries, or to cite
+number **and** title together.
+
+A stale citation is **not** evidence that the reconstructed numbering is wrong — the
+validator has already distinguished the two. `numbering_validation.mismatches` is the list
+that would mean the numbering is wrong, and when it is non-empty the numbering is marked
+unreliable and you must not quote section numbers at all.
 
 ## Check 4 — The revision history is a complete and accurate account of the differences  *(requirements 5 and 6, QA-Q7)*
 

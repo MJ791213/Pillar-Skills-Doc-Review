@@ -44,13 +44,18 @@ SENTENCE_SPLIT_RE = re.compile(r"(?<=[.;:])\s+")
 #: delta scan so "VER-0045", "Section 9" and "ISO 13485:2003" are not reported
 #: as changed values. A changed standard edition is check 6, not a numeric delta.
 NOT_A_QUANTITY_RE = re.compile(
-    r"\b[A-Z]{2,5}-\d{3,6}\b"
-    r"|\b(?:Section|Sections|Table|Figure|Fig\.?|Appendix|Annex|Part|Clause|Step)\s+\d+(?:\.\d+)*"
+    # Document and part numbers: DES-0028, OL-0116, IDX-PI-1015-96, HDA-LC-01
+    r"\b[A-Z]{2,6}(?:-[A-Z0-9]{1,6}){1,5}\b"
+    r"|\b(?:Section|Sections|Table|Figure|Fig\.?|Appendix|Annex|Part|Clause|Step|Steps)\s+\d+(?:\.\d+)*"
     r"|\b(?:ISO|IEC|EN|CLSI)(?:/(?:TR|TS|IEEE))?\s*\d{3,5}(?:-\d+)*(?::\s*\d{4})?"
     r"|\b\d{1,2}\s*CFR\s*(?:Part\s*)?\d{1,4}(?:\.\d+)?"
     r"|\b\d{4}-\d{2}-\d{2}\b"
-    r"|\b(?:EU\)?\s*)?20\d{2}/\d{3,4}\b",
-    re.I,
+    r"|\b(?:EU\)?\s*)?20\d{2}/\d{3,4}\b"
+    # Step / section identifiers: three or more dotted components is never a
+    # quantity, and a dotted number opening a block is a step label.
+    r"|\b\d+\.\d+\.\d+(?:\.\d+)*\b"
+    r"|^\s*\d+(?:\.\d+)+",
+    re.I | re.M,
 )
 
 
@@ -98,8 +103,14 @@ def word_diff(old, new):
 
 
 def numeric_deltas(old, new, where):
-    """Numbers that changed value between two versions of the same sentence."""
-    deltas = []
+    """Quantities that changed value between two versions of the same sentence.
+
+    Returns (changed, one_sided). Only a value present on *both* sides and
+    different is a changed value - the high-risk edit a reviewer must see. A
+    number that appears only in added text is just part of that added text, and
+    reporting it as a "delta" with old=None buries the real changes in noise.
+    """
+    changed, one_sided = [], []
     for change in word_diff(old, new):
         if change["type"] not in ("replace", "delete", "insert"):
             continue
@@ -107,34 +118,24 @@ def numeric_deltas(old, new, where):
         new_nums = numbers_in(change["new"])
         if not old_nums and not new_nums:
             continue
-        if old_nums and new_nums:
-            for o, n in zip(old_nums, new_nums):
-                if o["text"].lower() != n["text"].lower():
-                    deltas.append(
-                        {
-                            "where": where,
-                            "old": o["text"],
-                            "new": n["text"],
-                            "old_context": o["context"],
-                            "new_context": n["context"],
-                        }
-                    )
-            # Unpaired leftovers on either side.
-            for o in old_nums[len(new_nums):]:
-                deltas.append({"where": where, "old": o["text"], "new": None,
-                               "old_context": o["context"], "new_context": None})
-            for n in new_nums[len(old_nums):]:
-                deltas.append({"where": where, "old": None, "new": n["text"],
-                               "old_context": None, "new_context": n["context"]})
-        elif old_nums:
-            for o in old_nums:
-                deltas.append({"where": where, "old": o["text"], "new": None,
-                               "old_context": o["context"], "new_context": None})
-        else:
-            for n in new_nums:
-                deltas.append({"where": where, "old": None, "new": n["text"],
-                               "old_context": None, "new_context": n["context"]})
-    return deltas
+        for o, n in zip(old_nums, new_nums):
+            if o["text"].lower() != n["text"].lower():
+                changed.append(
+                    {
+                        "where": where,
+                        "old": o["text"],
+                        "new": n["text"],
+                        "old_context": o["context"],
+                        "new_context": n["context"],
+                    }
+                )
+        for o in old_nums[len(new_nums):]:
+            one_sided.append({"where": where, "old": o["text"], "new": None,
+                              "old_context": o["context"], "new_context": None})
+        for n in new_nums[len(old_nums):]:
+            one_sided.append({"where": where, "old": None, "new": n["text"],
+                              "old_context": None, "new_context": n["context"]})
+    return changed, one_sided
 
 
 def section_key(sec):
@@ -151,7 +152,7 @@ def label(sec):
 
 def diff_paragraphs(old_paras, new_paras, where):
     """Pair up paragraphs within a section and describe what changed."""
-    added, removed, modified, deltas = [], [], [], []
+    added, removed, modified, deltas, one_sided = [], [], [], [], []
     matcher = difflib.SequenceMatcher(None, old_paras, new_paras)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
@@ -179,11 +180,13 @@ def diff_paragraphs(old_paras, new_paras, where):
                 n = news[best]
                 modified.append({"old": o, "new": n, "similarity": round(best_ratio, 3),
                                  "word_changes": word_diff(o, n)})
-                deltas.extend(numeric_deltas(o, n, where))
+                ch, os_ = numeric_deltas(o, n, where)
+                deltas.extend(ch)
+                one_sided.extend(os_)
             else:
                 removed.append(o)
         added.extend(n for idx, n in enumerate(news) if idx not in used)
-    return added, removed, modified, deltas
+    return added, removed, modified, deltas, one_sided
 
 
 def diff_tables(old_tables, new_tables, skip_old, skip_new):
@@ -270,8 +273,16 @@ def build_change_statements(result):
 
 
 def header_revision(data):
-    revs = data["header_info"]["revisions"]
-    return revs[0] if len(revs) == 1 else (revs[0] if revs else None)
+    info = data["header_info"]
+    if info.get("revision"):
+        return info["revision"]
+    revs = info.get("revisions") or []
+    return revs[0] if len(revs) == 1 else None
+
+
+def history_revision(data):
+    rh = data.get("revision_history")
+    return rh.get("latest_rev") if rh else None
 
 
 def order_documents(a_path, b_path, forced):
@@ -279,22 +290,70 @@ def order_documents(a_path, b_path, forced):
     b = extract(b_path)
     if forced:
         return (a, a_path), (b, b_path), "forced by --force-order"
+
+    def decide(ra, rb, basis):
+        ka, kb = revision_sort_key(ra), revision_sort_key(rb)
+        if ka == kb:
+            return None
+        if ka > kb:
+            return (b, b_path), (a, a_path), f"{b_path.name} is {basis} {rb}, {a_path.name} is {basis} {ra}"
+        return (a, a_path), (b, b_path), f"{a_path.name} is {basis} {ra}, {b_path.name} is {basis} {rb}"
+
     ra, rb = header_revision(a), header_revision(b)
-    if ra is None or rb is None:
+    if ra is not None and rb is not None:
+        decided = decide(ra, rb, "Rev")
+        if decided:
+            return decided
+        # Same header revision is not necessarily a tie: with a major-only
+        # header convention, Rev 8 and Rev 8 can be 8.02 and 8.04 underneath.
+        ha, hb = history_revision(a), history_revision(b)
+        if ha is not None and hb is not None:
+            decided = decide(ha, hb, "latest revision history entry")
+            if decided:
+                old, new, reason = decided
+                return old, new, (
+                    f"both headers read Rev {ra}, so ordered by the revision history: {reason}"
+                )
         return None, None, (
-            f"Could not read a revision from the page header of "
-            f"{'both files' if ra is None and rb is None else (a_path.name if ra is None else b_path.name)}. "
-            "Say so and ask which file is the newer revision, or re-run with --force-order."
+            f"Both files report Rev {ra} in the page header and their revision histories do "
+            "not distinguish them. Ask which is the newer revision, or re-run with "
+            "--force-order."
         )
-    ka, kb = revision_sort_key(ra), revision_sort_key(rb)
-    if ka == kb:
-        return None, None, (
-            f"Both files report Rev {ra} in the page header. "
-            "Ask which is the newer revision, or re-run with --force-order."
-        )
-    if ka > kb:
-        return (b, b_path), (a, a_path), f"{b_path.name} is Rev {rb}, {a_path.name} is Rev {ra}"
-    return (a, a_path), (b, b_path), f"{a_path.name} is Rev {ra}, {b_path.name} is Rev {rb}"
+
+    # The header revision could not be read from one or both files. The revision
+    # history is the next most reliable signal, so use it and say so.
+    ha, hb = history_revision(a), history_revision(b)
+    missing = (
+        "both files" if ra is None and rb is None
+        else (a_path.name if ra is None else b_path.name)
+    )
+    if ha is not None and hb is not None:
+        decided = decide(ha, hb, "latest revision history entry")
+        if decided:
+            old, new, reason = decided
+            return old, new, (
+                f"no revision could be read from the page header of {missing}, so ordered by "
+                f"the revision history instead: {reason}"
+            )
+        if len(a["revision_history"]["entries"]) != len(b["revision_history"]["entries"]):
+            decided = decide(
+                len(a["revision_history"]["entries"]),
+                len(b["revision_history"]["entries"]),
+                "revision history entry count",
+            )
+            if decided:
+                old, new, reason = decided
+                return old, new, (
+                    f"no revision could be read from the page header of {missing}, and both "
+                    f"revision histories end at the same revision, so ordered by entry "
+                    f"count: {reason}"
+                )
+
+    return None, None, (
+        f"Could not read a revision from the page header of {missing}, and the revision "
+        "histories do not distinguish the two files. Say so and ask which file is the newer "
+        "revision, or re-run with --force-order."
+    )
 
 
 def run(old, new):
@@ -335,7 +394,7 @@ def run(old, new):
     for key in sorted(set(old_secs) & set(new_secs), key=lambda k: str(k)):
         o, n = old_secs[key], new_secs[key]
         where = label(n)
-        added, removed, modified, deltas = diff_paragraphs(
+        added, removed, modified, deltas, one_sided = diff_paragraphs(
             o["paragraphs"], n["paragraphs"], where
         )
         heading_changed = normalise(o["heading"]) != normalise(n["heading"])
@@ -350,6 +409,7 @@ def run(old, new):
                     "removed_paragraphs": removed,
                     "modified_paragraphs": modified,
                     "numeric_deltas": deltas,
+                    "one_sided_values": one_sided,
                 }
             )
 
@@ -362,6 +422,11 @@ def run(old, new):
     result["change_statements"] = build_change_statements(result)
     result["all_numeric_deltas"] = [
         d for s in result["sections_modified"] for d in s["numeric_deltas"]
+    ]
+    # Numbers that appear on only one side. Lower signal than a changed value,
+    # kept separate so they cannot crowd it out.
+    result["all_one_sided_values"] = [
+        d for s in result["sections_modified"] for d in s.get("one_sided_values", [])
     ]
     result["new_revision_history_entries"] = []
     if new.get("revision_history"):
@@ -412,9 +477,10 @@ def main():
     print(f"sections +/-  : {len(result['sections_added'])} added, "
           f"{len(result['sections_removed'])} removed")
     print(f"sections mod  : {len(result['sections_modified'])}")
-    print(f"numeric deltas: {len(result['all_numeric_deltas'])}")
+    print(f"changed values: {len(result['all_numeric_deltas'])}")
     for d in result["all_numeric_deltas"]:
         print(f"    {d['where']}: {d['old']} -> {d['new']}")
+    print(f"one-sided vals: {len(result['all_one_sided_values'])} (numbers only in added/removed text)")
     print(f"statements    : {len(result['change_statements'])}")
     print(f"wrote {target}")
 

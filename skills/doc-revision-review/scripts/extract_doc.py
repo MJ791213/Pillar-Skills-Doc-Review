@@ -25,10 +25,13 @@ from docx_common import (  # noqa: E402
     HEADING_NUM_RE,
     NOT_A_HEADING_RE,
     REV_RE,
+    HeadingNumberer,
     heading_level,
     iter_block_items,
+    major_revision,
     normalise,
     revision_sort_key,
+    table_rows,
     table_text_rows,
     text_of,
 )
@@ -47,7 +50,7 @@ except ImportError:  # pragma: no cover
 
 REV_COL = re.compile(r"\b(rev(ision)?|version|issue)\b", re.I)
 DATE_COL = re.compile(r"\b(date|effective|issued|released)\b", re.I)
-AUTHOR_COL = re.compile(r"\b(author|by|owner|prepared|originator|revised by)\b", re.I)
+AUTHOR_COL = re.compile(r"\b(author|by|owner|prepared|originator|revised by|name|initials)\b", re.I)
 DESC_COL = re.compile(
     r"\b(description|change|summary|reason|details?|nature|modification|revision history)\b", re.I
 )
@@ -183,6 +186,118 @@ def harvest_citations(sections):
 
 
 # --------------------------------------------------------------------------
+# Numbering self-validation
+# --------------------------------------------------------------------------
+
+#: "§ 5.6 Product Assessment", "section 2 References", "Section 5.5.1".
+#: The keyword is matched case-insensitively but the title must genuinely start
+#: with a capital, so "Section 3 to 2-8 degrees C" does not read as a title.
+CITED_SECTION_RE = re.compile(
+    r"(?:§|[Ss]ections?|[Ss]teps?)\s*(\d+(?:\.\d+)*)\s*[-,:–]?\s*"
+    r"([A-Z][A-Za-z][A-Za-z \-/&]{2,48})?"
+)
+
+#: Words that begin a clause, not a section title.
+_NOT_A_TITLE_START = {
+    "to", "and", "the", "for", "in", "of", "is", "was", "were", "see", "as", "at",
+    "by", "from", "with", "this", "that", "it", "has", "have", "had", "a", "an",
+    "corrected", "added", "removed", "updated", "edited", "changed",
+}
+
+
+def validate_numbering(sections, revision_history):
+    """Check reconstructed section numbers against the document's own citations.
+
+    A revision history usually cites its own sections by number *and* title
+    ("§ 2 References", "section 5.6 Product Assessment Documentation"). That is
+    free ground truth for the numbering rebuilt from the styles, so use it: if
+    the pairs agree the numbers can be quoted in findings, and if they disagree
+    they must not be.
+    """
+    by_number = {s["number"]: s for s in sections if s.get("number")}
+    if not revision_history or not by_number:
+        return {
+            "checked": 0, "agreed": 0, "disagreed": [], "unmatched": [],
+            "reliable": False,
+            "note": "No revision history or no section numbers to validate against.",
+        }
+
+    def squash(s):
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    def find_by_title(cited):
+        b = squash(cited)
+        if not b or len(b) < 6:
+            return None
+        for s in sections:
+            a = squash(s["title"])
+            if a and (a.startswith(b) or b.startswith(a) or b in a):
+                return s
+        return None
+
+    agreed, mismatches, stale = [], [], []
+    for entry in revision_history["entries"]:
+        for m in CITED_SECTION_RE.finditer(entry["description"] or ""):
+            number, cited_title = m.group(1), (m.group(2) or "").strip()
+            if not cited_title or len(cited_title) < 4:
+                continue
+            if cited_title.split()[0].lower() in _NOT_A_TITLE_START:
+                continue
+            section = by_number.get(number)
+            if section is not None:
+                a, b = squash(section["title"]), squash(cited_title)
+                if a and b and (a.startswith(b) or b.startswith(a) or b in a):
+                    agreed.append({"number": number, "title": section["title"], "cited": cited_title})
+                    continue
+            # The cited number does not carry the cited title. If that title
+            # exists elsewhere in the document, the section has moved since the
+            # entry was written: the entry is stale, the numbering is not wrong.
+            moved_to = find_by_title(cited_title)
+            if moved_to is not None:
+                stale.append(
+                    {
+                        "rev": entry["rev"],
+                        "row_index": entry["row_index"],
+                        "cited_as": number,
+                        "title": moved_to["title"],
+                        "now": moved_to.get("number") or "unnumbered",
+                    }
+                )
+            else:
+                mismatches.append(
+                    {
+                        "rev": entry["rev"],
+                        "cited_as": number,
+                        "cited_title": cited_title,
+                        "reconstructed_title": section["title"] if section else None,
+                    }
+                )
+
+    checked = len(agreed) + len(mismatches)
+    return {
+        "checked": checked,
+        "agreed": agreed,
+        "mismatches": mismatches,
+        # Not a numbering problem: historical entries citing numbers that have
+        # since changed. Report these under check 3.
+        "stale_citations": stale,
+        # Numbers may be quoted only when the document's own citations
+        # corroborate them and none genuinely contradicts them.
+        "reliable": len(agreed) > 0 and not mismatches,
+        "note": (
+            f"{len(agreed)} of {checked} number/title pairs cited in the revision history "
+            f"match the reconstructed numbering"
+            + (f"; {len(stale)} further citation(s) name a section that has since moved"
+               if stale else "")
+            + "."
+            if checked
+            else "The revision history cites no section number with a title, so the "
+                 "reconstructed numbering could not be corroborated."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------
 # Hygiene checks
 # --------------------------------------------------------------------------
 
@@ -203,6 +318,11 @@ ACRONYM_STOPLIST = {
     "LOT", "MIN", "MAX", "AVG", "STD", "DNA", "RNA", "PCR", "NGS", "IVD",
     "CLSI", "AAMI", "ANSI", "CEN", "MDSAP", "WHO", "EC", "UK", "MDR", "IVDR",
     "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X",
+    # Ordinary words that appear capitalised in templates and headings.
+    "OF", "AUTO", "REPORT", "SYSTEM", "FILL", "RAW", "TUBES", "PRIMER", "SCOPE",
+    "EXAMPLE", "METRIC", "DATA", "TOTAL", "NOTE", "STEP", "STEPS", "TABLE",
+    "FIGURE", "PASS", "FAIL", "YES", "PER", "VIA", "ALL", "NEW", "OLD", "END",
+    "AND", "OR", "IF", "SEE", "TYPE", "NAME", "DATE", "REV", "PAGE", "TITLE",
 }
 
 
@@ -238,7 +358,7 @@ def check_numbering(sections):
     return issues
 
 
-def check_cross_references(sections, table_count, figure_numbers):
+def check_cross_references(sections, table_count, figure_numbers, numbering_reliable=True):
     known_sections = {s["number"] for s in sections if s["number"]}
     issues = []
     for sec in sections:
@@ -246,12 +366,24 @@ def check_cross_references(sections, table_count, figure_numbers):
         for m in XREF_SECTION_RE.finditer(blob):
             target = m.group(1)
             if known_sections and target not in known_sections:
+                # Calling a reference broken when the section numbering could
+                # not be rebuilt reliably invents findings: the section very
+                # likely exists and simply has no number we can read.
                 issues.append(
                     {
-                        "type": "broken_section_reference",
+                        "type": (
+                            "broken_section_reference" if numbering_reliable
+                            else "unverified_section_reference"
+                        ),
+                        "severity_hint": "Minor" if numbering_reliable else "Observation",
                         "in_section": sec["number"] or sec["heading"],
                         "target": f"Section {target}",
                         "context": normalise(blob[max(0, m.start() - 60):m.end() + 60]),
+                        **({} if numbering_reliable else {
+                            "note": "Section numbering could not be corroborated, so this "
+                                    "reference could not be resolved either way. Do not "
+                                    "report it as broken."
+                        }),
                     }
                 )
         for m in XREF_TABLE_RE.finditer(blob):
@@ -279,19 +411,46 @@ def check_cross_references(sections, table_count, figure_numbers):
 
 def check_acronyms(sections):
     defined, first_use = {}, {}
+
+    def is_all_caps(s):
+        letters = [c for c in s if c.isalpha()]
+        return bool(letters) and all(c.isupper() for c in letters)
+
     for sec in sections:
-        blob = " ".join([sec["heading"]] + sec["paragraphs"])
-        # Document identifiers (VER-0045, DES-0028) are not acronyms.
-        blob = DOC_ID_RE.sub(" ", blob)
-        for m in ACRONYM_DEF_RE.finditer(blob):
-            acr = m.group(2).upper()
-            defined.setdefault(acr, {"expansion": normalise(m.group(1)),
-                                     "section": sec["number"] or sec["heading"]})
-        for m in ACRONYM_USE_RE.finditer(blob):
-            acr = m.group(1).upper()
-            if acr in ACRONYM_STOPLIST or len(acr) < 2:
+        where = sec["number"] or sec["heading"]
+
+        # A definitions section usually holds its terms in a table, not in
+        # "Expansion (ACR)" prose. Read those rows as definitions, or every
+        # term the document properly defines is reported as undefined.
+        for tbl in sec.get("tables", []):
+            for row in tbl.get("rows", []):
+                cells = [normalise(c) for c in row if normalise(c)]
+                if len(cells) < 2:
+                    continue
+                term = cells[0].strip().rstrip(":")
+                if 2 <= len(term) <= 12 and re.fullmatch(r"[A-Za-z0-9/\-]+", term):
+                    defined.setdefault(
+                        term.upper(), {"expansion": cells[1][:120], "section": where}
+                    )
+
+        for text in [sec["heading"]] + sec["paragraphs"]:
+            # Document identifiers (VER-0045, DES-0028) are not acronyms.
+            blob = DOC_ID_RE.sub(" ", text)
+            for m in ACRONYM_DEF_RE.finditer(blob):
+                acr = m.group(2).upper()
+                defined.setdefault(
+                    acr, {"expansion": normalise(m.group(1)), "section": where}
+                )
+            # In an ALL-CAPS heading or caption every word looks like an
+            # acronym ("RAW INDEXING PRIMER CATEGORIES"), so skip those
+            # entirely rather than invent a finding per word.
+            if is_all_caps(blob):
                 continue
-            first_use.setdefault(acr, sec["number"] or sec["heading"])
+            for m in ACRONYM_USE_RE.finditer(blob):
+                acr = m.group(1).upper()
+                if acr in ACRONYM_STOPLIST or len(acr) < 2:
+                    continue
+                first_use.setdefault(acr, where)
     undefined = [
         {"acronym": a, "first_used_in": s}
         for a, s in sorted(first_use.items())
@@ -364,10 +523,18 @@ def collect_headers_footers(document):
                 if part.is_linked_to_previous and i > 0:
                     continue
                 t = text_of(part)
+                xml = part._element.xml
             except Exception:
                 continue
-            if t.strip():
-                bucket.append({"section": i, "type": kind, "text": t})
+            has_fields = bool(re.search(r"\b(PAGE|NUMPAGES|SECTIONPAGES)\b", xml))
+            has_runs = qn("w:r") in xml or "<w:r>" in xml or "<w:r " in xml
+            # A footer holding only PAGE fields has no text at all. Dropping it
+            # would report "no footer found" for a document that has one, so
+            # keep it and let the check say what it could not read.
+            if t.strip() or has_fields or has_runs:
+                bucket.append(
+                    {"section": i, "type": kind, "text": t, "has_fields": has_fields}
+                )
     return headers, footers
 
 
@@ -384,6 +551,85 @@ def has_page_fields(document):
                 if re.search(rf"\b{field}\b", xml):
                     found[field] = True
     return found
+
+
+#: A header cell holding nothing but a revision: "8", "8.04", "B".
+BARE_REVISION_RE = re.compile(r"^(\d+(?:\.\d+)?|[A-Z])$")
+
+
+def cell_has_page_field(cell):
+    """True if the cell's content comes from a PAGE / NUMPAGES field."""
+    try:
+        xml = cell._tc.xml
+    except Exception:
+        return False
+    return bool(re.search(r"\b(PAGE|NUMPAGES|SECTIONPAGES)\b", xml))
+
+
+def find_header_revision(document, header_text, revision_history):
+    """Find the revision in the page header, labelled or not.
+
+    Templates often put the revision in a header table cell as a bare number
+    with no "Rev." label at all. A bare number in a header is ambiguous - it
+    could be a page number - so an unlabelled candidate is only trusted when
+    the revision history corroborates it.
+    """
+    labelled = sorted({m.group(1).upper() for m in REV_RE.finditer(header_text)})
+    if labelled:
+        return {
+            "revisions": labelled,
+            "revision": labelled[0] if len(labelled) == 1 else None,
+            "revision_source": "labelled in the page header",
+            "revision_confidence": "labelled",
+        }
+
+    doc_ids = {f"{m.group(1)}-{m.group(2)}" for m in DOC_ID_RE.finditer(header_text)}
+    candidates = []
+    for sec in document.sections:
+        for part in (sec.header, sec.first_page_header, sec.even_page_header):
+            try:
+                tables = part.tables
+            except Exception:
+                continue
+            for tbl in tables:
+                for row in table_rows(tbl):
+                    for cell in row:
+                        text = normalise(cell.text)
+                        if not text or text in doc_ids:
+                            continue
+                        if not BARE_REVISION_RE.match(text.upper()):
+                            continue
+                        if cell_has_page_field(cell):
+                            continue  # a page number, not a revision
+                        if text.upper() not in candidates:
+                            candidates.append(text.upper())
+
+    if not candidates:
+        return {
+            "revisions": [], "revision": None,
+            "revision_source": None,
+            "revision_confidence": "not found",
+        }
+
+    history_revs = set()
+    latest_major = None
+    if revision_history:
+        history_revs = {e["rev"] for e in revision_history["entries"] if e["rev"]}
+        latest_major = major_revision(revision_history.get("latest_rev"))
+
+    for cand in candidates:
+        if cand in history_revs or (latest_major and major_revision(cand) == latest_major):
+            return {
+                "revisions": [cand], "revision": cand,
+                "revision_source": "unlabelled page-header cell, corroborated by the revision history",
+                "revision_confidence": "inferred-corroborated",
+            }
+
+    return {
+        "revisions": candidates, "revision": None,
+        "revision_source": "unlabelled page-header cell, not corroborated",
+        "revision_confidence": "uncorroborated",
+    }
 
 
 def parse_header(header_text):
@@ -405,6 +651,8 @@ def parse_header(header_text):
         "doc_ids": ids,
         "revisions": revs,
         "title_candidates": title_lines,
+        # Kept un-normalised so checks can see punctuation the cleanup removes.
+        "raw_lines": [normalise(l) for l in header_text.splitlines() if normalise(l)],
     }
 
 
@@ -414,6 +662,15 @@ def parse_header(header_text):
 
 def build_sections(document):
     """Walk the body once, producing an ordered section tree."""
+    # Rebuild the numbers Word renders from the Heading styles, since most
+    # templates keep them out of the text entirely. Done in this single walk so
+    # the numbers cannot drift onto the wrong paragraphs.
+    numberer = HeadingNumberer(document)
+    number_source = numberer.source
+    # When the Heading styles already number the headings, the document has a
+    # structure to trust: a numbered paragraph in a body style is a step, not a
+    # section, so do not promote it from its text.
+    allow_text_headings = number_source != "resolved"
     sections = []
     tables = []
     figure_numbers = set()
@@ -430,7 +687,7 @@ def build_sections(document):
             text = normalise(block.text)
             if not text:
                 continue
-            lvl = heading_level(block)
+            lvl = heading_level(block, allow_text_fallback=allow_text_headings)
             if lvl == 0:
                 # The document title is not a section of its own; recording it
                 # as one makes a retitled document look like a section was
@@ -442,10 +699,16 @@ def build_sections(document):
             if lvl is not None:
                 sections.append(current)
                 m = HEADING_NUM_RE.match(text)
+                if m:
+                    number, title, src = m.group(1), m.group(2), "text"
+                else:
+                    number = numberer.number_for(block, lvl)
+                    title, src = text, (number_source if number else None)
                 current = {
-                    "number": m.group(1) if m else None,
+                    "number": number,
                     "heading": text,
-                    "title": m.group(2) if m else text,
+                    "title": title,
+                    "number_source": src,
                     "level": lvl,
                     "paragraphs": [],
                     "tables": [],
@@ -464,7 +727,8 @@ def build_sections(document):
     sections.append(current)
     for s in sections:
         s.setdefault("title", s["heading"])
-    return sections, tables, figure_numbers, title_paragraph
+        s.setdefault("number_source", None)
+    return sections, tables, figure_numbers, title_paragraph, number_source
 
 
 def document_title(document, sections, title_paragraph=None):
@@ -510,40 +774,102 @@ def auto_checks(header_info, title, revision_history, page_fields, footers):
     def squash(s):
         return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
-    title_match = None
-    if header_titles and title_values:
-        title_match = any(
+    # A document whose only self-naming is the page header has nothing to
+    # compare against: no Title-styled paragraph and no Word title property.
+    # Comparing the header against the first body heading ("PURPOSE AND SCOPE")
+    # would fail every document of that kind, which is a false positive.
+    own_title = title.get("core_properties_title") or title.get("title_paragraph")
+    if not own_title:
+        result = "REVIEW"
+        note = (
+            "The page header is the only place this document names itself: there is no "
+            "title block on page 1 and no Word document title property, so there is "
+            "nothing to compare the header against. Confirm the header title is correct "
+            "for the document's scope by reading it."
+        )
+    elif header_titles:
+        matched = any(
             squash(h) and squash(t) and (squash(h) in squash(t) or squash(t) in squash(h))
             for h in header_titles
             for t in title_values
         )
+        result = "PASS" if matched else "FAIL"
+        note = "Compare wording exactly; the automated match ignores punctuation and case."
+    else:
+        result = "REVIEW"
+        note = "No title could be read from the page header."
+
+    stray = [
+        l for l in header_info.get("raw_lines", [])
+        if re.search(r"[,;]\s*$", l.replace("|", "").strip())
+    ]
+    if stray:
+        note += (
+            f" Observation: the header title ends in stray punctuation ({stray!r});"
+            " worth tidying."
+        )
+
     checks.append(
         {
             "check": "1 Title vs header",
-            "result": "PASS" if title_match else ("REVIEW" if title_match is None else "FAIL"),
+            "result": result,
             "header_title_candidates": header_titles,
             "document_title_candidates": title_values,
-            "note": "Compare wording exactly; the automated match ignores punctuation and case.",
+            "note": note,
         }
     )
 
-    # Check 2 - header revision vs revision history
+    # Check 2 - header revision vs revision history.
+    #
+    # The header may legitimately carry only the major revision: a minor uprev
+    # (8.01 - 8.04) deliberately leaves the header at 8. So compare the major
+    # components, and report the exact match separately rather than failing a
+    # document that follows that convention.
     hist_rev = revision_history["latest_rev"] if revision_history else None
-    if not header_revs:
+    header_rev = header_info.get("revision")
+    confidence = header_info.get("revision_confidence")
+    exact = header_rev is not None and hist_rev is not None and header_rev == hist_rev
+    major_match = (
+        header_rev is not None and hist_rev is not None
+        and major_revision(header_rev) == major_revision(hist_rev)
+    )
+
+    if header_rev is None or hist_rev is None or confidence == "uncorroborated":
         result = "REVIEW"
-    elif hist_rev is None:
-        result = "REVIEW"
-    elif len(set(header_revs)) == 1 and header_revs[0] == hist_rev:
+    elif exact or major_match:
         result = "PASS"
     else:
         result = "FAIL"
+
+    note = None
+    if result == "PASS" and not exact:
+        note = (
+            f"Header reads Rev {header_rev}; the latest revision history entry is "
+            f"Rev {hist_rev}. The major revisions agree, which is the expected "
+            "convention for a minor uprev - not a finding."
+        )
+    elif confidence == "uncorroborated":
+        note = (
+            f"A bare value {header_revs} was found in the page header but the revision "
+            "history does not corroborate it as a revision. Confirm the header revision "
+            "manually; do not report PASS or FAIL."
+        )
+    elif header_rev is None and not header_revs:
+        note = "No revision could be found in the page header."
+
     checks.append(
         {
             "check": "2 Header revision vs revision history",
             "result": result,
+            "header_revision": header_rev,
             "header_revisions": header_revs,
+            "revision_source": header_info.get("revision_source"),
+            "revision_confidence": confidence,
             "revision_history_latest": hist_rev,
+            "exact_match": exact,
+            "major_match": major_match,
             "revision_history_row_index": revision_history["latest_entry_row_index"] if revision_history else None,
+            **({"note": note} if note else {}),
         }
     )
 
@@ -564,11 +890,29 @@ def auto_checks(header_info, title, revision_history, page_fields, footers):
         }
     )
 
+    # A footer whose cells hold only PAGE fields extracts as "| |" - present in
+    # structure but carrying no controlled-copy statement or template ID. That
+    # is not a pass.
+    footer_words = " ".join(
+        re.sub(r"[|\s\d]+", " ", f["text"]) for f in footers
+    ).strip()
+    if not footers:
+        result, note = "FAIL", "No footer was found in any w:ftr part."
+    elif len(footer_words) < 3:
+        result, note = "REVIEW", (
+            "A footer exists but carries no readable text - its cells appear to hold only "
+            "page-number fields. Confirm by eye whether the controlled-copy statement and "
+            "the template ID are present (QA-Q9 / QA-Q10)."
+        )
+    else:
+        result, note = "PASS", None
+
     checks.append(
         {
             "check": "7b Footer present",
-            "result": "PASS" if footers else "FAIL",
+            "result": result,
             "footer_text": [f["text"] for f in footers],
+            **({"note": note} if note else {}),
         }
     )
 
@@ -712,6 +1056,18 @@ def extract_pdf(path):
             break
 
     header_info = parse_header(header_text)
+    # In a PDF the numbers are baked into the text, so what was parsed is what
+    # Word rendered - no reconstruction needed, nothing to corroborate.
+    pdf_numbering = validate_numbering(sections, rev_hist)
+    pdf_numbering["source"] = "text"
+    pdf_numbering["sections_numbered"] = sum(1 for s in sections if s.get("number"))
+    header_info.setdefault("revision", header_info["revisions"][0] if header_info["revisions"] else None)
+    header_info.setdefault(
+        "revision_source", "labelled in the running header" if header_info["revisions"] else None
+    )
+    header_info.setdefault(
+        "revision_confidence", "labelled" if header_info["revisions"] else "not found"
+    )
     title = {
         "core_properties_title": None,
         "title_paragraph": sections[0]["paragraphs"][0] if sections[0]["paragraphs"] else None,
@@ -737,6 +1093,7 @@ def extract_pdf(path):
         "title": title,
         "revision_history": rev_hist,
         "sections": sections,
+        "numbering_validation": pdf_numbering,
         "tables": [{"table_index": i, "rows": rows} for i, rows in enumerate(tables)],
         "citations": harvest_citations(sections),
         "hygiene": {
@@ -766,10 +1123,28 @@ def extract_docx(path):
     headers, footers = collect_headers_footers(document)
     header_text = "\n".join(h["text"] for h in headers)
     header_info = parse_header(header_text)
-    sections, tables, figure_numbers, title_paragraph = build_sections(document)
+    sections, tables, figure_numbers, title_paragraph, number_source = build_sections(document)
     title = document_title(document, sections, title_paragraph)
     rev_hist = find_revision_history(tables)
     page_fields = has_page_fields(document)
+
+    # The revision may be unlabelled in a header table cell, so look for it
+    # properly once the revision history is available to corroborate it.
+    header_info.update(find_header_revision(document, header_text, rev_hist))
+
+    numbering = validate_numbering(sections, rev_hist)
+    # Reliability depends on where the numbers actually came from. A number
+    # written in the heading text is as trustworthy as the document itself and
+    # needs no corroboration; a number rebuilt from the Heading styles does.
+    sources = {s["number_source"] for s in sections if s.get("number")}
+    numbering["source"] = (
+        "text" if sources == {"text"} else (number_source if sources else "none")
+    )
+    numbering["section_number_sources"] = sorted(s for s in sources if s)
+    numbering["sections_numbered"] = sum(1 for s in sections if s.get("number"))
+    reconstructed = bool(sources - {"text"})
+    numbering_reliable = (not reconstructed) or numbering["reliable"]
+    numbering["reliable"] = numbering_reliable
 
     warnings = []
     if rev_hist is None:
@@ -779,6 +1154,30 @@ def extract_docx(path):
         )
     if not headers:
         warnings.append("No page header was found in any w:hdr part.")
+    if header_info.get("revision_confidence") == "inferred-corroborated":
+        warnings.append(
+            f"The page header carries no 'Rev.' label; Rev {header_info['revision']} was read "
+            "from a bare header cell and corroborated against the revision history."
+        )
+    elif header_info.get("revision_confidence") == "uncorroborated":
+        warnings.append(
+            "A bare value in the page header might be the revision but the revision history "
+            "does not corroborate it. Confirm the revision by eye before reporting check 2."
+        )
+    if reconstructed and numbering["sections_numbered"]:
+        if numbering["reliable"]:
+            warnings.append(
+                f"Section numbers are generated by the Heading styles and were rebuilt from "
+                f"the document's numbering definitions; {len(numbering['agreed'])} of "
+                f"{numbering['checked']} number/title pairs cited in the revision history "
+                "confirm them."
+            )
+        else:
+            warnings.append(
+                "Section numbers are generated by the Heading styles and could not be "
+                "corroborated against the revision history. Do not quote section numbers "
+                "in findings - refer to sections by heading title instead."
+            )
 
     return {
         "file": str(path),
@@ -790,14 +1189,17 @@ def extract_docx(path):
         "title": title,
         "revision_history": rev_hist,
         "sections": sections,
+        "numbering_validation": numbering,
         "tables": [
             {"table_index": i, "rows": table_text_rows(t)} for i, t in enumerate(tables)
         ],
         "citations": harvest_citations(sections),
         "hygiene": {
             "placeholders": check_placeholders(sections),
-            "numbering": check_numbering(sections),
-            "cross_references": check_cross_references(sections, len(tables), figure_numbers),
+            "numbering": check_numbering(sections) if numbering_reliable else [],
+            "cross_references": check_cross_references(
+                sections, len(tables), figure_numbers, numbering_reliable
+            ),
             "acronyms": check_acronyms(sections),
             "markup_left_in": check_markup_left_in(document),
         },
@@ -838,11 +1240,16 @@ def main():
     hi = data["header_info"]
     print(f"format        : {data['format']}")
     print(f"doc id        : {', '.join(hi['doc_ids']) or '(none found in header)'}")
-    print(f"header rev    : {', '.join(hi['revisions']) or '(none found in header)'}")
+    print(f"header rev    : {hi.get('revision') or ', '.join(hi['revisions']) or '(none found)'}"
+          f"  [{hi.get('revision_confidence')}]")
     rh = data["revision_history"]
     print(f"rev history   : {len(rh['entries'])} entries, latest Rev {rh['latest_rev']}"
           if rh else "rev history   : NOT FOUND")
-    print(f"sections      : {len(data['sections'])}")
+    nv = data.get("numbering_validation") or {}
+    print(f"sections      : {len(data['sections'])} "
+          f"({nv.get('sections_numbered', 0)} numbered, source={nv.get('source')}, "
+          f"reliable={nv.get('reliable')}, corroborated {len(nv.get('agreed', []))}"
+          f"/{nv.get('checked', 0)})")
     print(f"citations     : {len(data['citations'])}")
     for c in data["auto_checks"]:
         print(f"[{c['result']:6}] {c['check']}")
