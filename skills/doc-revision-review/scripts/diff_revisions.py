@@ -272,6 +272,134 @@ def build_change_statements(result):
     return out
 
 
+def _squash(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def cross_check_numbering(old, new):
+    """Explain numbering gaps and stale citations using *both* revisions.
+
+    A gap in the heading numbers, or a revision history entry citing a section
+    that no longer exists, is not a defect on its own: the document may simply
+    have had a section added or removed in this revision, which renumbers
+    everything after it. Judging either from the new revision alone invents
+    findings. With both revisions in hand each one can be explained, and what
+    is left is the question actually worth asking - whether the add or the
+    delete is recorded in the revision history.
+    """
+    from extract_doc import (
+        CITED_SECTION_RE,
+        _NOT_A_TITLE_START,
+        check_numbering,
+        find_section_by_title,
+    )
+
+    old_by_num = {s["number"]: s for s in old["sections"] if s.get("number")}
+    new_by_num = {s["number"]: s for s in new["sections"] if s.get("number")}
+
+    def in_old(title):
+        return find_section_by_title(old["sections"], title)
+
+    def in_new(title):
+        return find_section_by_title(new["sections"], title)
+
+    def missing_numbers(data):
+        out = set()
+        for issue in check_numbering(data["sections"]):
+            if issue["type"] == "heading_number_gap":
+                out.update(issue["missing"])
+        return out
+
+    new_missing = missing_numbers(new)
+    old_missing = missing_numbers(old)
+
+    gaps = []
+    for number in sorted(new_missing):
+        if number in old_missing:
+            gaps.append({
+                "number": number, "status": "pre-existing",
+                "note": "The same gap exists in the previous revision, so this change did "
+                        "not introduce it. Not a finding against this revision.",
+            })
+            continue
+        was = old_by_num.get(number)
+        if was is None:
+            gaps.append({
+                "number": number, "status": "unexplained",
+                "note": "No section carried this number in the previous revision either, "
+                        "so the gap is not explained by an addition or a removal.",
+            })
+            continue
+        moved_to = in_new(was.get("title"))
+        if moved_to is not None:
+            gaps.append({
+                "number": number, "status": "renumbered", "title": was.get("title"),
+                "now": moved_to.get("number") or "unnumbered",
+                "note": "The section still exists under a different number, so the gap is "
+                        "the result of renumbering. Check the revision history describes "
+                        "whatever insertion or removal caused it.",
+            })
+        else:
+            gaps.append({
+                "number": number, "status": "section_removed", "title": was.get("title"),
+                "note": "This section existed in the previous revision and is gone from "
+                        "this one, which explains the gap. The question is whether the "
+                        "removal is recorded in the revision history, and whether the "
+                        "remaining sections should have been renumbered to close it.",
+            })
+
+    citations = []
+    rh = new.get("revision_history")
+    if rh:
+        for entry in rh["entries"]:
+            for m in CITED_SECTION_RE.finditer(entry["description"] or ""):
+                number, title = m.group(1), (m.group(2) or "").strip()
+                if not title or len(title) < 4:
+                    continue
+                if title.split()[0].lower() in _NOT_A_TITLE_START:
+                    continue
+                here = new_by_num.get(number)
+                if here is not None:
+                    if in_new(title) is here and here is not None:
+                        continue  # cites the right number for the right section
+                now = in_new(title)
+                record = {
+                    "rev": entry["rev"], "row_index": entry["row_index"],
+                    "cited_as": number, "cited_title": title,
+                }
+                if now is not None:
+                    record.update({
+                        "status": "moved",
+                        "now": now.get("number") or "unnumbered",
+                        "note": "The section still exists under a different number. The "
+                                "entry was accurate when written; it is the numbering that "
+                                "has moved since. Report it so the reader is not sent to "
+                                "the wrong place, not as an error in the entry.",
+                    })
+                elif in_old(title) is not None:
+                    record.update({
+                        "status": "section_removed",
+                        "note": "The section this entry cites existed in the previous "
+                                "revision and is not in this one. Check the removal is "
+                                "recorded in the revision history.",
+                    })
+                else:
+                    record.update({
+                        "status": "unresolved",
+                        "note": "No section with this number or title exists in either "
+                                "revision, so the citation looks wrong as written.",
+                    })
+                citations.append(record)
+
+    return {
+        "numbering_gaps": gaps,
+        "revision_history_citations": citations,
+        "note": "Gaps and citations judged against both revisions. A gap marked "
+                "'pre-existing', 'renumbered' or 'section_removed' is explained by the "
+                "document's history and is not by itself an error.",
+    }
+
+
 def header_revision(data):
     info = data["header_info"]
     if info.get("revision"):
@@ -419,6 +547,7 @@ def run(old, new):
         old["tables"], new["tables"], skip_old, skip_new
     )
 
+    result["numbering_cross_check"] = cross_check_numbering(old, new)
     result["change_statements"] = build_change_statements(result)
     result["all_numeric_deltas"] = [
         d for s in result["sections_modified"] for d in s["numeric_deltas"]
@@ -481,6 +610,17 @@ def main():
     for d in result["all_numeric_deltas"]:
         print(f"    {d['where']}: {d['old']} -> {d['new']}")
     print(f"one-sided vals: {len(result['all_one_sided_values'])} (numbers only in added/removed text)")
+    cc = result["numbering_cross_check"]
+    if cc["numbering_gaps"]:
+        print(f"numbering gaps: {len(cc['numbering_gaps'])}")
+        for g in cc["numbering_gaps"]:
+            print(f"    {g['number']}: {g['status']}"
+                  + (f" ({g.get('title')})" if g.get("title") else ""))
+    if cc["revision_history_citations"]:
+        print(f"stale cites   : {len(cc['revision_history_citations'])}")
+        for c in cc["revision_history_citations"]:
+            print(f"    Rev {c['rev']} cites {c['cited_as']} \"{c['cited_title'][:40]}\""
+                  f" -> {c['status']}" + (f" (now {c['now']})" if c.get("now") else ""))
     print(f"statements    : {len(result['change_statements'])}")
     print(f"wrote {target}")
 

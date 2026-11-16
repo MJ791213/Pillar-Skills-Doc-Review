@@ -203,6 +203,20 @@ def main():
         check("the 'Section 9' cross-reference is not read as a quantity",
               not any(t[0].startswith("§1 ") for t in deltas), f"got {sorted(deltas)}")
 
+        # A numbering gap and a stale citation must be judged against BOTH
+        # revisions: a gap is usually explained by a section added or removed,
+        # not by a numbering mistake.
+        cc = d["numbering_cross_check"]
+        equal("the 4.3 gap is explained, not reported as a bare defect",
+              [(g["number"], g["status"]) for g in cc["numbering_gaps"]],
+              [("4.3", "renumbered")])
+        check("and it names the section that moved",
+              cc["numbering_gaps"][0].get("title") == "Equipment",
+              f"got {cc['numbering_gaps'][0]!r}")
+        cites = [(c["cited_as"], c["status"]) for c in cc["revision_history_citations"]]
+        equal("a section that never existed is 'unresolved', not 'moved'",
+              cites, [("9", "unresolved")])
+
         statements = [s["statement"] for s in d["change_statements"]]
         check("renumbering 4.3 -> 4.4 is reported",
               any("4.4" in s for s in statements) and any("4.3" in s for s in statements))
@@ -358,6 +372,12 @@ def main():
         tdeltas = {(x["where"], x["old"], x["new"]) for x in td["all_numeric_deltas"]}
         check("tpl: the hold-time change 15 -> 30 minutes is caught",
               any(o == "15" and n == "30" for _, o, n in tdeltas), f"got {sorted(tdeltas)}")
+        tcc = td["numbering_cross_check"]
+        tcites = {(c["cited_as"], c["status"], c.get("now")) for c in tcc["revision_history_citations"]}
+        check("tpl: the stale 5.3 citation resolves to 4.3 across the two revisions",
+              ("5.3", "moved", "4.3") in tcites, f"got {sorted(map(str, tcites))}")
+        equal("tpl: no unexplained numbering gaps",
+              [g for g in tcc["numbering_gaps"] if g["status"] == "unexplained"], [])
 
         # Annotating a style-driven document must keep the cell's paragraph style.
         tpl_findings = work / "tpl_findings.json"

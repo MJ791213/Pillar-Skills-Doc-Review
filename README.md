@@ -19,16 +19,19 @@ seven checks:
 | 6 | No superseded standards or regulations cited |
 | 7 | Document hygiene — footer, page numbering, heading continuity, cross-references, placeholders, acronyms |
 
-It returns **the document annotated in Word**:
+It reports the findings **in the reply, as two tables**:
 
-- **red** notes written into the revision history table, next to the entry they
-  concern, in the font already used in that cell — missing entries, claims that
-  were not carried out, and entries that describe a change incorrectly;
-- an **orange** "Claude Recommendations" block appended at the end, with the
-  review summary and the recommended updates, labelled as a Claude
-  recommendation and not as approved content.
+| Section | Error |
+|---|---|
+| What is wrong: a wrong revision number, a revision history entry that is wrong or unsupported, a change that is undescribed or does not make sense, a conflict between sections, an outdated regulation, a broken reference. |
 
-The source file is never modified; a new `_CLAUDE-REVIEW.docx` is written.
+| Section | Recommendation |
+|---|---|
+| What could be better but is not wrong: clearer formatting, better wording, consistency, structural suggestions. |
+
+No file is produced and the source document is never modified. A marked-up Word
+copy is available on request (`scripts/annotate_docx.py`), but it is not the
+default.
 
 Which file is the newer revision is decided from the revision in the page
 header, not from the file name or the upload order.
@@ -71,16 +74,16 @@ skills/doc-revision-review/
     docx_common.py                 shared .docx traversal (headers, tables, headings)
     extract_doc.py                 header/footer/title/revision history/sections/citations
     diff_revisions.py              section-aware old-vs-new comparison
-    annotate_docx.py               writes the red and orange annotations; --strip-annotations
+    annotate_docx.py               optional marked-up .docx; --strip-annotations
   references/
     review-checklist.md            the seven checks, line by line
     regulatory-currency.md         current standard editions, with per-row provenance
-    annotation-format.md           wording templates and the findings.json shape
+    output-format.md               how to word the two tables; the optional Word output
   assets/
     findings-template.json         worked findings file for the fixture pair
   examples/
     make_fixtures.py               generates two fixture pairs with planted defects
-    selftest.py                    asserts the whole pipeline (77 assertions)
+    selftest.py                    asserts the whole pipeline (96 assertions)
     expected-findings.md           the regression baseline
     verify_annotation.py           asserts the annotations are really in the output
 ```
@@ -107,7 +110,7 @@ any script:
 cd skills/doc-revision-review && python3 examples/selftest.py
 ```
 
-It makes 77 assertions across two fixture pairs and exits non-zero if any fails. It covers: a clean Rev 1
+It makes 96 assertions across two fixture pairs and exits non-zero if any fails. It covers: a clean Rev 1
 raising no findings, each planted defect in Rev 2 being found, the newer
 revision being identified from the header rather than the argument order, the
 numeric-delta mask rejecting document IDs and cross-references, red notes

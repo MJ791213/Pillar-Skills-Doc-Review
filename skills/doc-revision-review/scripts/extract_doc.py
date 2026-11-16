@@ -205,6 +205,33 @@ _NOT_A_TITLE_START = {
 }
 
 
+def squash_title(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def find_section_by_title(sections, cited):
+    """The section whose title best matches a title cited in prose.
+
+    A citation's title is rarely captured exactly: the regex may stop short
+    ("Edit and delete any") or run on into the next clause ("Product Assessment
+    Documentation -added"). Exact matching therefore misses the section and the
+    caller wrongly concludes it was removed, so match on containment either way
+    and keep the longest candidate.
+    """
+    b = squash_title(cited)
+    if not b or len(b) < 6:
+        return None
+    best, best_len = None, -1
+    for s in sections:
+        a = squash_title(s.get("title"))
+        if not a:
+            continue
+        if a == b or a.startswith(b) or b.startswith(a) or b in a or a in b:
+            if len(a) > best_len:
+                best, best_len = s, len(a)
+    return best
+
+
 def validate_numbering(sections, revision_history):
     """Check reconstructed section numbers against the document's own citations.
 
@@ -226,14 +253,7 @@ def validate_numbering(sections, revision_history):
         return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
     def find_by_title(cited):
-        b = squash(cited)
-        if not b or len(b) < 6:
-            return None
-        for s in sections:
-            a = squash(s["title"])
-            if a and (a.startswith(b) or b.startswith(a) or b in a):
-                return s
-        return None
+        return find_section_by_title(sections, cited)
 
     agreed, mismatches, stale = [], [], []
     for entry in revision_history["entries"]:
