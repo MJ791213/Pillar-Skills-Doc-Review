@@ -91,6 +91,32 @@ def main():
 
     try:
         # ---------------------------------------------------------------
+        # Packaging limits. `claude plugin validate` does not enforce these,
+        # so they only surface when the claude.ai uploader rejects the zip.
+        # ---------------------------------------------------------------
+        import re as _re
+
+        skill_md = (SKILL_DIR / "SKILL.md").read_text()
+        front = skill_md.split("---")[1]
+        m = _re.search(r"^description:\s*(.*?)(?=^\w+:|\Z)", front, _re.S | _re.M)
+        check("SKILL.md has a description", m is not None)
+        if m:
+            desc = " ".join(m.group(1).split())
+            check(
+                f"description is within the 1024-character upload limit ({len(desc)})",
+                len(desc) <= 1024,
+                f"{len(desc)} characters, {len(desc) - 1024} over",
+            )
+            missing = [
+                p for p in ("document review", "review this document", "revision history",
+                            "compare revisions", "QA review")
+                if p not in desc
+            ]
+            check("description keeps its trigger phrases", not missing, f"missing {missing}")
+        name = _re.search(r"^name:\s*(\S+)", front, _re.M)
+        equal("skill name matches its directory name",
+              name.group(1) if name else None, SKILL_DIR.name)
+        # ---------------------------------------------------------------
         # Fixtures
         # ---------------------------------------------------------------
         run(SKILL_DIR / "examples" / "make_fixtures.py", "--out", work / "fx")
