@@ -129,7 +129,7 @@ an entry — do not pad the findings.
 
 ### Step 4 – Annotate and deliver
 
-Write `findings.json` (shape and worked example:
+Write `findings.json` — the two tables plus the red revision-history notes (shape and worked example:
 `assets/findings-template.json`; wording templates:
 `references/annotation-format.md`). Take `revision_history_table_index` and
 every `row_index` from `extract.json`; never count rows by hand.
@@ -162,11 +162,24 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/annotate_docx.py" <annotated.docx> --strip-
 
 ## Annotation rules
 
-- **Red** (`FF0000`) goes **only** into the revision history table, in the row of the entry it concerns, and only for findings about the revision history. It inherits the cell's font so it reads as part of the table.
-- **Orange** (`ED7D31`) goes **only** into the block appended at the end: the review summary, the recommended updates, and the note stating that this is a Claude recommendation requiring reviewer judgement.
+The output is **two tables**, appended at the end, plus red notes inside the
+revision history table.
+
+| | |
+|---|---|
+| **Errors** (red), `Section \| Error` | Everything that is **wrong**: a wrong revision number, a revision history entry that is wrong or unsupported, a change to the body that is wrong or undescribed, **an update that does not make sense** — made but inconsistent, incomplete, or not matching its own stated reason — a conflict between sections, an outdated or incorrect regulation, a broken reference, a surviving placeholder, a missing required element. |
+| **Recommendations** (orange), `Section \| Recommendation` | Everything that could be **better** but is not wrong: a clearer display or format, a better description or wording, consistency, structural suggestions. |
+
+The dividing line: **an error is something the reviewer is obliged to act on
+before approval; a recommendation is something they may act on, and the
+document is correct either way.** If you cannot decide, ask whether the document
+would be defective if released as it stands.
+
+- **Red** also goes into the revision history table, in the row of the entry it concerns, for revision-history findings. It inherits the cell's font so it reads as part of the table. Each of those also belongs in the Errors table, so the reviewer sees it in both places.
 - Nothing else in the document is touched. Do not correct a value in place, edit body text, or add a section the author did not write.
-- Every inserted run carries the `[Claude]` marker so a later round can strip it.
-- A check with no findings still appears in the summary table, with its result.
+- Every run inserted into the document body carries the `[Claude]` marker so a later round can strip it.
+- A check you could not complete goes in `checks_not_performed`, never silently omitted — an empty Errors table must not read as "nothing is wrong" when it means "not looked at".
+- A finding you could not confirm is **not** an error. Put it in Recommendations worded as something to check, or list it under `checks_not_performed`.
 
 ## Writing rules for findings
 
@@ -176,8 +189,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/annotate_docx.py" <annotated.docx> --strip-
 - **Never invent** a document ID, revision, date, name, CAPA number or value. Write `[TBD – author to confirm]`.
 - **Never guess at a value you cannot read.** Use **REVIEW** and say what was unreadable.
 - Distinguish what you verified from what you inferred. "No §9 exists in this revision" is a fact; "the author probably meant §8" is an inference and must be labelled as one.
-- Severity: **Major** for wrong or missing content with regulatory, safety or product impact; **Minor** for internal inconsistency without product impact; **Observation** for cosmetic or judgement calls.
-- Keep the chat reply short — which file was newer, one line per check, the counts, the output path, and anything you could not check. The findings live in the document, not in the reply.
+- Severity still goes in `findings.json` (**Major** for wrong or missing content with regulatory, safety or product impact; **Minor** for internal inconsistency without product impact; **Observation** for cosmetic or judgement calls). It is not printed — the tables have two columns — but it orders the Errors table, Major first, and it feeds the change order.
+- Keep the chat reply short — which file was newer, one line per check, the error and recommendation counts, the output path, and anything you could not check. The findings live in the document, not in the reply.
 
 ## Reference files
 

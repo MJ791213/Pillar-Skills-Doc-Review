@@ -3,7 +3,15 @@
     "A worked findings.json, for the DES-9999 Rev 1 -> Rev 2 fixture pair in",
     "examples/. Copy the shape, not the content. Every row_index and",
     "table_index comes from extract.json -> revision_history; never count rows",
-    "by hand. All seven checks appear in summary, including passes and N/A."
+    "by hand.",
+    "",
+    "Errors are defects: something is wrong and needs correcting.",
+    "Recommendations are improvements: nothing is wrong, but it could be",
+    "clearer or better presented. If you cannot decide, ask whether a reviewer",
+    "would be obliged to act on it - if yes it is an error.",
+    "",
+    "Checks that could not be completed go in checks_not_performed, so an",
+    "empty Errors table is never mistaken for 'nothing wrong'."
   ],
 
   "document": {
@@ -47,121 +55,97 @@
     }
   ],
 
-  "summary": [
+  "errors": [
     {
-      "number": 1,
-      "check": "Title vs header",
-      "result": "FAIL",
-      "evidence": "Page header reads “DES-9999 - NIPT Assay Specification”; the title on page 1 and the Word document property both read “NIPT Assay Validation Specification”."
+      "section": "§3 and §7",
+      "severity": "Major",
+      "qa_q": "QA-Q6",
+      "error": "Conflicting storage requirements. §3 requires the kit at 2-8 °C; §7 requires samples at room temperature (15-25 °C). Both are written as requirements and cannot both be met for the same material. Decide which condition controls, state it once, and cross-reference it from the other section."
     },
     {
-      "number": 2,
-      "check": "Header revision vs revision history",
-      "result": "FAIL",
-      "evidence": "Page header reads Rev. 2. The latest revision history entry reads Rev 3 (row 2)."
+      "section": "§7 Revision History, row 2 (Rev 3)",
+      "severity": "Major",
+      "qa_q": "QA-Q7",
+      "error": "The revision column reads 3 but the page header reads Rev. 2. One of the two is wrong and must be corrected before approval."
     },
     {
-      "number": 3,
-      "check": "Revision history entries evidenced in the body",
-      "result": "FAIL",
-      "evidence": "Rev 1 “Initial release”: PASS. Rev 3 claims §9 Environmental Monitoring was added; no §9 exists. The storage claim is evidenced: §3 reads 2-8 degrees C."
+      "section": "§7 Revision History, row 2 (Rev 3)",
+      "severity": "Major",
+      "qa_q": "QA-Q7",
+      "error": "The entry claims “Added Section 9 Environmental Monitoring”, but no §9 exists in this revision. Either add the section or remove the claim."
     },
     {
-      "number": 4,
-      "check": "Revision history complete vs previous revision",
-      "result": "FAIL",
-      "evidence": "Compared against DES-9999 Rev 1. Five real differences are not described by any entry: the title change, §5.2 95% -> 98%, §4.3 -> §4.4 renumbering, the §6 TBD replacing the VER-0045 reference, and the added §1 cross-reference to §9. One claim is not done (§9)."
+      "section": "§5.2 Acceptance Criteria",
+      "severity": "Major",
+      "qa_q": "QA-Q6",
+      "error": "The call rate acceptance criterion changed from 95% to 98% since Rev 1 with no revision history entry. A change to an acceptance criterion must be described in the revision history."
     },
     {
-      "number": 5,
-      "check": "Internal consistency between sections",
-      "result": "FAIL",
-      "evidence": "§3 requires storage at 2-8 degrees C; §7 requires samples stored at room temperature (15-25 degrees C). §1 refers to §9, which does not exist."
+      "section": "§6 Verification Activities",
+      "severity": "Major",
+      "qa_q": "QA-Q6",
+      "error": "§6 reads “The regression sample set is TBD”, replacing the reference to VER-0045 Appendix A. A released specification cannot leave a verification input undefined, and the change is not in the revision history."
     },
     {
-      "number": 6,
-      "check": "Regulatory and standards currency",
-      "result": "FAIL",
-      "evidence": "§2 cites ISO 13485:2003, ISO 15223-1:2016 and “21 CFR 820 Quality System Regulation”. ISO 14971:2019 and CLSI EP17-A2 appear current."
+      "section": "§2 References",
+      "severity": "Minor",
+      "qa_q": "QA-Q6",
+      "error": "ISO 13485:2003 is cited; the current edition appears to be ISO 13485:2016. Confirm against the controlled standards list."
     },
     {
-      "number": 7,
-      "check": "Document hygiene",
-      "result": "FAIL",
-      "evidence": "Footer and PAGE/NUMPAGES fields present (PASS). Heading numbering skips 4.3. §6 contains a TBD placeholder. §1 references a non-existent §9. DAISY and NIPT are used without expansion."
+      "section": "§2 References",
+      "severity": "Minor",
+      "qa_q": "QA-Q6",
+      "error": "ISO 15223-1:2016 is cited; the current edition appears to be ISO 15223-1:2021, with Amendment 1:2025 applying where the authorised-representative symbol is used. Confirm against the controlled standards list."
+    },
+    {
+      "section": "§2 References",
+      "severity": "Minor",
+      "qa_q": "QA-Q6",
+      "error": "21 CFR Part 820 is cited as the “Quality System Regulation”. Part 820 has been the Quality Management System Regulation (QMSR) since 2 February 2026 and incorporates ISO 13485:2016 by reference. Confirm against the controlled standards list."
+    },
+    {
+      "section": "Page header",
+      "severity": "Minor",
+      "qa_q": "QA-Q8",
+      "error": "The page header title (“NIPT Assay Specification”) does not match the document title (“NIPT Assay Validation Specification”), and the body now covers validation content the header title does not describe."
+    },
+    {
+      "section": "§1 Purpose",
+      "severity": "Minor",
+      "qa_q": "QA-Q6",
+      "error": "§1 states that environmental monitoring is described in §9. There is no §9 in this revision, so the cross-reference resolves to nothing."
+    },
+    {
+      "section": "§4 Materials",
+      "severity": "Minor",
+      "qa_q": "QA-Q6",
+      "error": "Heading numbering runs 4.1, 4.2, 4.4. There is no 4.3."
     }
   ],
 
   "recommendations": [
     {
-      "severity": "Major",
-      "qa_q": "QA-Q6",
-      "location": "§3 vs §7",
-      "finding": "§3 Storage Conditions requires the kit at 2-8 degrees C. §7 Sample Handling requires samples at room temperature (15-25 degrees C). Both are presented as requirements and they cannot both be met for the same material.",
-      "suggested_action": "Decide which condition controls for which material, state it once, and cross-reference it from the other section."
+      "section": "§7 Revision History",
+      "recommendation": "Describe changes by section number and old → new value (“§5.2 acceptance criterion 95% → 98%”) rather than in general terms. It makes each entry verifiable against the body at the next review."
     },
     {
-      "severity": "Major",
-      "qa_q": "QA-Q8",
-      "location": "Page header",
-      "finding": "The header title and the document title differ, and the body now covers validation content that the header title does not describe.",
-      "suggested_action": "Align the header, the page 1 title and the Word document property on one title, and confirm it matches the document's scope after this revision."
+      "section": "§3 Definitions",
+      "recommendation": "DAISY and NIPT are used without expansion at first use and the document has no definitions section. Consider adding one, or expanding both at first use."
     },
     {
-      "severity": "Major",
-      "qa_q": "QA-Q6",
-      "location": "§6",
-      "finding": "§6 states “The regression sample set is TBD”. A released specification cannot leave a verification input undefined.",
-      "suggested_action": "Restore the reference to VER-0045 Appendix A or define the regression sample set before release."
+      "section": "Footer",
+      "recommendation": "The footer carries the uncontrolled-copy statement and PAGE/NUMPAGES fields but no template ID. Adding the template ID would let template currency be checked from the document itself."
     },
     {
-      "severity": "Minor",
-      "qa_q": "QA-Q6",
-      "location": "§2",
-      "finding": "ISO 13485:2003 is cited. The current edition appears to be ISO 13485:2016, reconfirmed in 2025.",
-      "suggested_action": "Update to ISO 13485:2016. Confirm against the controlled standards list."
+      "section": "§7 Revision History",
+      "recommendation": "Consider adding a change-order / DCR column so each revision is traceable to the change order that authorised it without leaving the document."
     },
     {
-      "severity": "Minor",
-      "qa_q": "QA-Q6",
-      "location": "§2",
-      "finding": "ISO 15223-1:2016 is cited. The current edition appears to be ISO 15223-1:2021, with Amendment 1:2025 applying where the authorised-representative symbol is used.",
-      "suggested_action": "Update to ISO 15223-1:2021 and cite Amd 1:2025 if the EC REP symbol is in scope. Confirm against the controlled standards list."
-    },
-    {
-      "severity": "Minor",
-      "qa_q": "QA-Q6",
-      "location": "§2",
-      "finding": "21 CFR Part 820 is cited as the “Quality System Regulation”. Part 820 has been the Quality Management System Regulation (QMSR) since 2 February 2026, and it incorporates ISO 13485:2016 by reference.",
-      "suggested_action": "Retitle the citation to the Quality Management System Regulation and check whether any subpart references still read correctly. Confirm against the controlled standards list."
-    },
-    {
-      "severity": "Minor",
-      "qa_q": "QA-Q6",
-      "location": "§1",
-      "finding": "§1 states that environmental monitoring is described in §9. There is no §9 in this revision.",
-      "suggested_action": "Add the section or remove the cross-reference, consistent with whatever the Rev 3 history entry intended."
-    },
-    {
-      "severity": "Minor",
-      "qa_q": "QA-Q6",
-      "location": "§4",
-      "finding": "Heading numbering runs 4.1, 4.2, 4.4. There is no 4.3.",
-      "suggested_action": "Renumber 4.4 to 4.3, or add the missing subsection."
-    },
-    {
-      "severity": "Observation",
-      "qa_q": "QA-Q6",
-      "location": "§1, §5.1",
-      "finding": "DAISY and NIPT are used without expansion at first use, and the document has no definitions section.",
-      "suggested_action": "Expand both at first use, or add a definitions section."
-    },
-    {
-      "severity": "Observation",
-      "qa_q": "QA-Q10",
-      "location": "Footer",
-      "finding": "The footer carries the uncontrolled-copy statement and PAGE/NUMPAGES fields, but no template ID, so template currency could not be checked.",
-      "suggested_action": "Confirm the document is on the current controlled template and that the template ID appears in the footer."
+      "section": "§5 Performance Requirements",
+      "recommendation": "Acceptance criteria would be easier to verify if the criterion, the method and the sample set were presented in one table per requirement rather than in prose."
     }
-  ]
+  ],
+
+  "checks_not_performed": []
 }

@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover
 RED = "FF0000"
 ORANGE = "ED7D31"
 MARKER = "[Claude]"
-BLOCK_HEADING_PREFIX = "Claude Recommendations"
+BLOCK_HEADING_PREFIXES = ("Claude Review", "Claude Recommendations")
 
 
 def run_text(r):
@@ -84,22 +84,51 @@ def main():
     body = document.element.body
     runs = body.findall(f".//{qn('w:r')}")
 
+    # Red is used in two places on purpose: notes inside the revision history
+    # table, and the Errors table in the appended review block. Only the first
+    # kind annotates the document itself, so the marker and in-a-table rules
+    # apply to those alone.
+    #
+    # Partitioned in one pass over the body's children, collecting each child's
+    # runs as we go. Do not try to do this by recording element identities and
+    # walking parents afterwards: lxml hands out a fresh proxy for the same
+    # node on a later traversal, so id() comparisons across two passes silently
+    # classify everything into the wrong bucket.
+    red_annotations, red_in_block = [], []
+    in_block = False
+    for child in body.iterchildren():
+        if not in_block and child.tag == qn("w:p"):
+            text = "".join(t.text or "" for t in child.findall(f".//{qn('w:t')}"))
+            if text.strip().startswith(BLOCK_HEADING_PREFIXES):
+                in_block = True
+        found = [r for r in child.findall(f".//{qn('w:r')}") if run_colour(r) == RED]
+        (red_in_block if in_block else red_annotations).extend(found)
+
     red = [r for r in runs if run_colour(r) == RED]
     orange = [r for r in runs if run_colour(r) == ORANGE]
 
     if not red:
         failures.append("no red runs found")
+    elif not red_annotations:
+        notes.append(f"{len(red)} red run(s), all in the review block's Errors table")
     else:
-        notes.append(f"{len(red)} red run(s)")
-        outside = [r for r in red if not in_table(r)]
+        notes.append(
+            f"{len(red)} red run(s): {len(red_annotations)} annotating the document, "
+            f"{len(red_in_block)} in the Errors table"
+        )
+        outside = [r for r in red_annotations if not in_table(r)]
         if outside:
             failures.append(
-                f"{len(outside)} red run(s) sit outside any table; red belongs in "
-                "the revision history table only"
+                f"{len(outside)} red annotation run(s) sit outside any table; red "
+                "annotations belong in the revision history table only"
             )
-        unmarked = [r for r in red if not run_text(r).strip().startswith(MARKER)]
+        unmarked = [
+            r for r in red_annotations if not run_text(r).strip().startswith(MARKER)
+        ]
         if unmarked:
-            failures.append(f"{len(unmarked)} red run(s) are missing the {MARKER} marker")
+            failures.append(
+                f"{len(unmarked)} red annotation run(s) are missing the {MARKER} marker"
+            )
 
         # Whether a run *should* carry an explicit font depends on the document.
         # Many templates set the font on the paragraph style and leave the runs
@@ -107,7 +136,7 @@ def main():
         # fail a correctly annotated file. What matters is that the red run
         # matches its surroundings - checked against --source below, and via
         # the paragraph style here.
-        for r in red:
+        for r in red_annotations:
             family, pts = run_font(r)
             if (family is None or pts is None) and not a.source:
                 notes.append(
@@ -118,7 +147,7 @@ def main():
                 break
 
         styleless = []
-        for r in red:
+        for r in red_annotations:
             p = r.getparent()
             if p is None or p.tag != qn("w:p"):
                 continue
@@ -150,7 +179,7 @@ def main():
         for r in src.element.body.findall(f".//{qn('w:r')}"):
             if in_table(r) and run_text(r).strip():
                 src_fonts.add(run_font(r))
-        red_fonts = {run_font(r) for r in red}
+        red_fonts = {run_font(r) for r in red_annotations}
         if red_fonts and not (red_fonts & src_fonts):
             failures.append(
                 f"red run fonts {sorted(map(str, red_fonts))} match none of the "
@@ -168,13 +197,55 @@ def main():
     heading_index = None
     for i, p in enumerate(paragraphs):
         text = "".join(t.text or "" for t in p.findall(f".//{qn('w:t')}"))
-        if text.strip().startswith(BLOCK_HEADING_PREFIX):
+        if text.strip().startswith(BLOCK_HEADING_PREFIXES):
             heading_index = i
             break
     if heading_index is None:
-        failures.append(f"no paragraph starting with {BLOCK_HEADING_PREFIX!r}")
+        failures.append(f"no paragraph starting with one of {BLOCK_HEADING_PREFIXES!r}")
     else:
-        notes.append(f"recommendations block heading at body paragraph {heading_index}")
+        notes.append(f"review block heading at body paragraph {heading_index}")
+
+    # The review block must end in exactly the two tables, in order, with the
+    # agreed headers and colours.
+    def table_header(tbl):
+        rows = tbl.findall(f".//{qn('w:tr')}")
+        if not rows:
+            return [], set()
+        cells = rows[0].findall(qn("w:tc"))
+        labels = [
+            "".join(t.text or "" for t in c.findall(f".//{qn('w:t')}")).strip()
+            for c in cells
+        ]
+        colours = {
+            run_colour(r) for c in cells for r in c.findall(f".//{qn('w:r')}")
+            if run_colour(r)
+        }
+        return labels, colours
+
+    tables = body.findall(qn("w:tbl"))
+    if len(tables) < 2:
+        failures.append("the review block's two tables are not both present")
+    else:
+        err_labels, err_colours = table_header(tables[-2])
+        rec_labels, rec_colours = table_header(tables[-1])
+        if err_labels == ["Section", "Error"]:
+            notes.append("errors table present with Section | Error")
+            if err_colours and err_colours != {RED}:
+                failures.append(f"errors table is not red: {sorted(err_colours)}")
+        else:
+            failures.append(
+                f"second-to-last table is not the errors table: headers {err_labels}"
+            )
+        if rec_labels == ["Section", "Recommendation"]:
+            notes.append("recommendations table present with Section | Recommendation")
+            if rec_colours and rec_colours != {ORANGE}:
+                failures.append(
+                    f"recommendations table is not orange: {sorted(rec_colours)}"
+                )
+        else:
+            failures.append(
+                f"last table is not the recommendations table: headers {rec_labels}"
+            )
 
     full_text = "\n".join(
         "".join(t.text or "" for t in p.findall(f".//{qn('w:t')}")) for p in paragraphs

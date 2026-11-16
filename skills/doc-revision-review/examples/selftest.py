@@ -236,10 +236,40 @@ def main():
               all(p.text.strip().startswith("[Claude]") for p in red))
 
         full = "\n".join(p.text for p in doc.paragraphs)
-        check("orange block is labelled as not approved content",
+        check("review block is labelled as not approved content",
               "not part of the approved document" in full)
         check("closing note states it is a Claude recommendation",
               "is a Claude recommendation" in full)
+
+        # The review block ends in exactly two tables, in this order.
+        errors_tbl, recs_tbl = doc.tables[-2], doc.tables[-1]
+        equal("errors table has Section | Error",
+              [c.text for c in errors_tbl.rows[0].cells], ["Section", "Error"])
+        equal("recommendations table has Section | Recommendation",
+              [c.text for c in recs_tbl.rows[0].cells], ["Section", "Recommendation"])
+        template = json.loads(
+            (SKILL_DIR / "assets" / "findings-template.json").read_text()
+        )
+        equal("every error in findings.json reaches the errors table",
+              len(errors_tbl.rows) - 1, len(template["errors"]))
+        equal("every recommendation reaches the recommendations table",
+              len(recs_tbl.rows) - 1, len(template["recommendations"]))
+
+        def colours(tbl):
+            out = set()
+            for row in tbl.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        for r in p.runs:
+                            if r.font.color and r.font.color.rgb:
+                                out.add(str(r.font.color.rgb))
+            return out
+
+        equal("errors table is red", colours(errors_tbl), {"FF0000"})
+        equal("recommendations table is orange", colours(recs_tbl), {"ED7D31"})
+        check("errors are ordered with Major first",
+              errors_tbl.rows[1].cells[1].text.startswith("Conflicting storage"),
+              f"first row: {errors_tbl.rows[1].cells[1].text[:60]!r}")
 
         # ---------------------------------------------------------------
         # Strip round-trip
@@ -340,11 +370,15 @@ def main():
                  "text": "Missing entry: the incoming inspection hold time changed from "
                          "15 to 30 minutes."}
             ],
-            "summary": [{"number": 4, "check": "Revision history complete",
-                         "result": "FAIL", "evidence": "hold time 15 -> 30 undocumented"}],
-            "recommendations": [{"severity": "Major", "qa_q": "QA-Q6", "location": "§4.1",
-                                 "finding": "Hold time changed without an entry.",
-                                 "suggested_action": "Add a revision history entry."}],
+            "errors": [{"section": "§4.1", "severity": "Major", "qa_q": "QA-Q6",
+                        "error": "The incoming inspection hold time changed from 15 to "
+                                 "30 minutes with no revision history entry."}],
+            "recommendations": [{"section": "§7 Revision History",
+                                 "recommendation": "Cite the section number and the "
+                                                   "old to new value in each entry."}],
+            "checks_not_performed": [
+                "Check 6 - regulatory currency: the document cites no external standard."
+            ],
         }))
         tpl_annotated = work / "TP-9999_Rev8_CLAUDE-REVIEW.docx"
         tpl_before = md5(tpl_new)
@@ -352,6 +386,16 @@ def main():
             "--findings", tpl_findings, "--out", tpl_annotated)
         run(SKILL_DIR / "examples" / "verify_annotation.py", tpl_annotated, "--source", tpl_new)
         equal("tpl: source untouched", md5(tpl_new), tpl_before)
+
+        tpl_doc = docx.Document(str(tpl_annotated))
+        equal("tpl: errors table has Section | Error",
+              [c.text for c in tpl_doc.tables[-2].rows[0].cells], ["Section", "Error"])
+        equal("tpl: recommendations table has Section | Recommendation",
+              [c.text for c in tpl_doc.tables[-1].rows[0].cells],
+              ["Section", "Recommendation"])
+        tpl_text = "\n".join(p.text for p in tpl_doc.paragraphs)
+        check("tpl: checks that did not run are listed under 'Not checked'",
+              "Not checked" in tpl_text and "regulatory currency" in tpl_text)
 
     finally:
         if a.keep:

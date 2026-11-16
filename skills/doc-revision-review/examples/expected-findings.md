@@ -110,15 +110,23 @@ has broken and Word will render the notes in the default font.
 
 ## Expected review
 
-`assets/findings-template.json` is the worked findings file for this pair: all
-seven checks FAIL, six red notes on row 2, and ten recommendations. A review of
-this fixture should land close to it.
+`assets/findings-template.json` is the worked findings file for this pair:
+six red notes on revision history row 2, **11 errors** and **5 recommendations**.
+A review of this fixture should land close to it.
 
-Results: checks 1–7 all **FAIL**. Six red notes, all on revision history row 2.
-Recommendations: three Major (the §3/§7 storage conflict, the title
-misalignment, the `TBD` verification input), five Minor (three superseded or
-retitled citations, the broken §9 reference, the 4.3 numbering gap), two
-Observation (undefined acronyms, template ID absent from the footer).
+The output is two tables appended at the end of the document:
+
+- **Errors** (red, `Section | Error`) — five Major: the §3/§7 storage conflict,
+  the Rev 3 / header Rev 2 disagreement, the §9 claimed but not added, the
+  undocumented 95% → 98% criterion change, and the `TBD` verification input.
+  Six Minor: three superseded or retitled citations, the header/title
+  mismatch, the broken §9 reference, the 4.3 numbering gap.
+- **Recommendations** (orange, `Section | Recommendation`) — five improvements
+  that are not defects: entry wording, a definitions section, the template ID
+  in the footer, a DCR column, acceptance criteria presented as a table.
+
+Ordering matters: the Errors table is sorted by severity, so the §3/§7 storage
+conflict is the first row.
 
 ## Round-trip
 
